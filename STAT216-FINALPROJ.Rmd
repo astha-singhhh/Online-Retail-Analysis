@@ -1,0 +1,393 @@
+---
+title: "Analysis of Online Retail Transactions Across European Countries: Patterns in Purchase Quantity and Transaction Value"
+author: "Astha Singh"
+date: "06/24/24"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 2
+header-includes:
+  - \usepackage{setspace}
+  - \onehalfspacing
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.width=8, fig.height=3, 
+                      warning = FALSE, message = FALSE, error=TRUE)
+
+## Library ALL packages HERE
+library(dplyr)
+library(lubridate)
+library(readxl)
+library(car)
+library(olsrr)
+```
+
+## Background
+
+Online retail has become a significant sector in the global economy, with businesses facing unique challenges in understanding customer behavior, managing inventory, and optimizing sales strategies. This study focuses on a UK-based online retailer specializing in unique all-occasion gifts, analyzing transaction data from 2011 across six European countries: United Kingdom, Germany, France, Ireland (EIRE), Belgium, and Spain. The dataset comprises 19,794 transactions after preprocessing, which included filtering for the year 2011, selecting specific countries, and removing missing values.
+
+The dataset, sourced from the UCI Machine Learning Repository, includes original variables such as InvoiceNo, StockCode, Description, Quantity, InvoiceDate, UnitPrice, CustomerID, and Country. To enhance our analysis, we derived additional variables from this raw data:
+
+* TotalQuantity: Sum of items purchased per transaction
+* TotalSpend: Total value of each transaction (Quantity * UnitPrice)
+* UniqueItems: Number of distinct products in each transaction
+* IsWeekend: Whether the transaction occurred on a weekend
+* IsHighValue: Whether the transaction value is above the mean
+
+By examining this enhanced dataset, we aim to uncover patterns in customer behavior, purchase quantities across different countries, and factors influencing total spend. These insights can inform business strategies, improve customer satisfaction, and potentially increase profitability.
+
+It's important to note that the United Kingdom dominates the dataset with 18,285 transactions, representing 92.4% of the total. This disproportionate representation will be considered in our analysis and interpretation of results.
+
+```{r input, include=FALSE, fig.width=8, fig.height=3}
+# Input
+retail <- read_excel("/Users/astha.s918/Desktop/Online_Retail.xlsx")
+
+# Filtering to only data from 2011
+retail <- subset(retail, format(InvoiceDate, "%Y") == "2011")
+
+# Filtering data to these specific countries
+retail <- subset(retail, Country == "United Kingdom" |
+                           Country == "Germany" |
+                           Country == "France" |
+                           Country == "EIRE" |
+                           Country == "Belgium" |
+                           Country == "Spain")
+
+# Removing missing values 
+retail <- na.omit(retail)
+
+retail$Country <- factor(retail$Country)
+retail$StockCode <- factor(retail$StockCode)
+
+retail <- retail %>%
+  group_by(InvoiceNo) %>%
+  summarise(
+    TotalQuantity = sum(Quantity),
+    InvoiceDate = first(InvoiceDate),
+    TotalSpend = sum(Quantity * UnitPrice),  # Total transaction value
+    CustomerID = first(CustomerID),
+    Country = first(Country),
+    UniqueItems = n_distinct(StockCode)   
+    # Counting the number of different items (unique StockCode) in each invoice 
+  )
+
+retail$InvoiceNo <- factor(retail$InvoiceNo)
+retail$CustomerID <- factor(retail$CustomerID)
+retail$InvoiceDate <- as.Date(retail$InvoiceDate)
+
+summary(retail)
+t1 <- table(retail$Country)
+```
+
+```{r pie, fig.width=8, fig.height=3}
+par(mfrow=c(1,2))
+barplot(t1, main = "Count of Countries")
+pie(t1, labels = paste(names(t1), "\n n=", t1, "\n", 
+          round (100*prop.table(t1), 1), "%"), main = "Piechart of Countries")
+```
+
+## Analysis 1: Comparing Average Purchase Quantities Across Weekends and Weekdays
+
+* Null Hypothesis: The mean total quantities of items purchased on weekends is the same as or lower than on weekdays.
+* Alternative Hypothesis: The mean total quantities of items purchased on weekends is higher than on weekdays.
+
+The rationale behind this first analysis is to understand purchasing patterns between weekends and weekdays which can help the retailer optimize inventory management, staffing, and marketing strategies. If customers tend to buy more items on weekends, the firms could plan targeted promotions or ensure adequate stock levels for weekend shopping. This can help the UK-based online retailer optimize their operations for each market, potentially increasing sales and customer satisfaction.
+
+To investigate this, we conducted a two-sample t-Test with Welch's Adjustment. Prior to the analysis, we checked the assumptions of data type, independence, normality, and homogeneity of variances. Data type was not violated since we are using quantitative data (TotalQuantity) with categorical data (IsWeekend). Following data type, independence was also met because the observations of each invoice are independent both within and across countries. The Central Limit Theorem for normality and Levene's test for homogeneity of variances were then conducted. Due to the large sample sizes the central limit theorem was satisfied and normality is assumed. The Levene's test indicated unequal variances (p = 0.022), justifying the use of a two-sample t-Test with Welch's Adjustment. 
+
+```{r 1, fig.width=8, fig.height=3}
+# Weekend or Weekday 
+retail$IsWeekend <- ifelse(wday(retail$InvoiceDate) == 1 | 
+                           wday(retail$InvoiceDate) == 7, 
+                           "Weekend", "Weekday")
+retail$IsWeekend <- factor(retail$IsWeekend)
+levels(retail$IsWeekend) <- c("Weekend", "Weekday")
+
+weekendQuan <- retail$TotalQuantity[retail$IsWeekend == "Weekend"]
+weekdayQuan <- retail$TotalQuantity[retail$IsWeekend == "Weekday"]
+
+# Boxplot
+boxplot(TotalQuantity ~ IsWeekend, data = retail, 
+        main = "Boxplot of Total Quantities Purchased: Weekend vs. Weekday")
+points(x=1:2, y=c(mean(weekendQuan), mean(weekdayQuan)))
+
+# Normality
+par(mfrow = c(1, 2))
+hist(weekendQuan, freq=FALSE, main = "Histogram for Weekend")
+lines(density(weekendQuan), col=2, lwd=2)
+curve(dnorm(x, mean=mean(weekendQuan), sd=sd(weekendQuan)), add=TRUE, lwd=2)
+qqPlot(weekendQuan, main = "QQ Plot for Weekend")
+
+hist(weekdayQuan, freq=FALSE, main = "Histogram for Weekday")
+lines(density(weekdayQuan), col=2, lwd=2)
+curve(dnorm(x, mean=mean(weekdayQuan), sd=sd(weekdayQuan)), add=TRUE, lwd=2)
+qqPlot(weekdayQuan, main = "QQ Plot for Weekday")
+
+# Central Limit Theorem is satisfied, therefore normality is assumed.
+
+leveneTest(TotalQuantity ~ IsWeekend, data = retail) 
+
+# 2 Sample t-Test with Welch's Adjustment 
+t.test(TotalQuantity ~ IsWeekend, data = retail, alternative = "greater", 
+       var.equal = FALSE)
+```
+
+We observed a significantly larger number of transactions on weekends compared to weekdays. 
+
+Group       Total Count
+----------  ---------------------
+Weekend     17,643
+Weekday     2,151
+----------  ---------------------
+
+Despite this imbalance, the Two-Sample t-Test with Welch's Adjustment yielded a marginally insignificant result (p-value = 0.051), suggesting no statistically significant difference in the average total quantities of items purchased between weekends and weekdays.
+
+This finding is somewhat surprising given the common assumption that people have more time for online shopping during weekends. There can be several factors explaining this result. For example, the nature of online businesses; unlike physical stores, online shops are accessible 24/7, potentially equalizing purchase patterns. Also, since there is a predominantly UK-based customer base, local shopping habits or work patterns might influence this result.
+
+We then wanted to continue exploring and see if there are more items purchased on the weekends than weekdays specifically in the United Kingdom by conducing another Two-Sample t-Test. 
+
+* Null Hypothesis: The mean total quantities of items purchased on weekends is the same as or lower than on weekdays in the United Kingdom.
+* Alternative Hypothesis: The mean total quantities of items purchased on weekends is higher than on weekdays in the United Kingdom.
+
+The rationale for this follow-up analysis is to focus specifically on the UK market, which comprises the majority of our dataset (92.4% of transactions). By isolating the UK data, we aim to uncover any country-specific patterns that might have been obscured in the initial analysis due to the pooling of all countries.
+
+Before conducting the analysis, we checked the assumptions of a Two-Sample t-Test. The data type and independence assumptions were met for the same reasons as in the previous test. The Central Limit Theorem ensures normality due to the large sample size. However, we found that the equal variance assumption was violated, therefore we needed to use a Two-Sample t-Test with Welch's Adjustment.
+
+```{r 2, fig.width=8, fig.height=3}
+# Looking specifically at UK
+retail_uk <- subset(retail, Country == "United Kingdom")
+leveneTest(TotalQuantity ~ IsWeekend, data = retail_uk) 
+t.test(TotalQuantity ~ IsWeekend, data = retail_uk, alternative = "greater", var.equal = FALSE)
+```
+
+Unlike the first analysis, we observed a significant difference in means between items purchased on the weekend and weekday in the United Kingdom (t test, p-value = 0.037). With 95% confidence, we estimate that transactions on the weekends were at least 1.70 more items purchases than transactions made on the weekdays.
+
+This finding contrasts with our initial analysis that included all countries, highlights the importance of market-specific analysis. The significant weekend effect in the UK market suggests that British customers may indeed have different shopping habits on weekends compared to weekdays. This could be due to various factors such as more leisure time on weekends, cultural shopping habits, etc. 
+
+## Analysis 2: Comparing Proportions of High Total Spends Across Countries
+
+* Null Hypothesis: The proportions of high-value total spent transactions in each country (Belgium, Ireland, France, Germany, Spain, United Kingdom) are evenly distributed. 
+* Alternative Hypothesis: At least one country has a different proportion of high total spent transactions.
+
+The rationale behind this analysis is help us understand if certain countries have a higher or lower proportion of high-value total spent transactions than we would expect if there were no country-specific differences. This insight can help identify markets where customers tend to make larger purchases, which can inform marketing strategies, inventory management, and customer service approaches tailored to each country's spending patterns.
+
+We used a Chi-Square Goodness of Fit test to compare the observed proportions of high total spent transactions in each country to the expected proportions. Before the analysis, we checked that all observed values and expected values are greater than or equal to 5 to justify the use of a Chi-Square Goodness of Fit. Also, in our analysis, we use the mean of the total spent per invoice as the threshold for high and low total spend. We would like to note a different threshold might yield different results.
+
+```{r 3, fig.width=8, fig.height=3}
+MeanSpend <- mean(retail$TotalSpend)
+retail$IsHighSpend <- ifelse(retail$TotalSpend > MeanSpend, "High", "Low")
+retail$IsHighSpend <- factor(retail$IsHighSpend)
+
+(cat.tab <- table(retail$Country, retail$IsHighSpend))
+barplot(prop.table(cat.tab, 1), 
+        beside = TRUE, 
+        legend = TRUE, 
+        main = "Proportion of High-Value Transactions by Country",
+        xlab = "Country", 
+        ylab = "Proportion")
+
+# Chi Square Goodness of Fit
+chisq.test(cat.tab)
+```
+
+The Chi-Square Goodness of Fit test resulted in significant results (Chi-Square, p-value < 0.0001). There is sufficient evidence to prove that at least one country has a different proportion of high total spend transactions. 
+
+We can conclude that there is sufficient evidence to prove that the proportions of high total spend transactions differ significantly in at least one country.  
+
+Country               Proportion of High Total Spend Transactions     
+------------------    -------------------------------------------- 
+Belgium               0.3596                                
+Ireland               0.6167                              
+France                0.4493                               
+Germany               0.3768                               
+Spain.                0.4950                               
+United Kingdom        0.2951                            
+------------------    -------------------------------------------- 
+
+Ireland has the highest proportion of high total spend transactions at 61.67%. France follows with 44.93% of high total spend transactions. The United Kingdom, despite having the largest number of transactions, has the lowest proportion of high total spend transactions at 29.51%.
+
+From these findings, the online retailer could develop strategies specific to each country to either capitalize on markets with higher proportions of high total spend transactions or to increase spending in markets with lower proportions. The online retailer might investigate what factors contribute to Ireland and France having the higher proportion of high total spend transactions. In addition, given the large number of transaction being from the United Kingdom, the company might look for strategies to increase the proportion of high total spend transactions as this could have a significant impact on the overall revenue.
+
+However, we should keep in mind that the data imbalance due to United Kingdom might skew the overall proportion, effecting our interpretations for the other countries. 
+
+We then wanted to compare the mean total spend across different countries because understanding country-specific spending patterns can inform targeted marketing strategies and help optimize inventory management for each market. 
+
+* Null Hypothesis: The mean total spend is the same across all countries.
+* Alternative Hypothesis: At least one country's mean total spend is different from the others.
+
+We conducted an an ANOVA with Welch's Adjustment to investigate this. Before the analysis, we checked the assumptions of data type, independence, normality, and equal variances. Data type was not violated since we are using quantitative data (TotalSpend) with categorical data (Country). Following data type, independence was also met because the observations of each invoice are independent both within and across countries. Due to the large sample sizes the Central Limit Theorem was satisfied and due the robustness of ANOVA to departures from normality, normality is assumed. The Levene's test indicated unequal variances (p-value = 0.0200), justifying the use of an ANOVA with Welch's Adjustment.
+
+```{r 4, fig.width=8, fig.height=4}
+# ANOVA
+belgium <- retail$TotalQuantity[retail$Country=="Belgium"]
+eire <- retail$TotalQuantity[retail$Country=="EIRE"]
+france <- retail$TotalQuantity[retail$Country=="France"]
+germany <- retail$TotalQuantity[retail$Country=="Germany"]
+spain <- retail$TotalQuantity[retail$Country=="Spain"]
+uk <- retail$TotalQuantity[retail$Country=="United Kingdom"]
+
+# Explore Data
+# Boxplot
+boxplot(TotalQuantity ~ Country, data = retail, 
+        main = "Countries vs. Total Quantities Purchased")
+points(x=1:6, y=c(mean(belgium), mean(eire), mean(france), 
+                  mean(germany), mean(spain), mean(uk)))
+
+par(mfrow = c(2, 2))
+# Normality
+hist(belgium, freq=FALSE, main = "Histogram for Belgium")
+lines(density(belgium), col=2, lwd=2)
+curve(dnorm(x, mean=mean(belgium), sd=sd(belgium)), add=TRUE, lwd=2)
+library(car)
+qqPlot(belgium, main = "QQ Plot for Belgium")
+
+hist(eire, freq=FALSE, main = "Histogram for Ireland")
+lines(density(eire), col=2, lwd=2)
+curve(dnorm(x, mean=mean(eire), sd=sd(eire)), add=TRUE, lwd=2)
+qqPlot(eire, main = "QQ Plot for Ireland")
+
+hist(france, freq=FALSE, main = "Histogram for France")
+lines(density(france), col=2, lwd=2)
+curve(dnorm(x, mean=mean(france), sd=sd(france)), add=TRUE, lwd=2)
+qqPlot(france, main = "QQ Plot for France")
+
+hist(germany, freq=FALSE, main = "Histogram for Germany")
+lines(density(germany), col=2, lwd=2)
+curve(dnorm(x, mean=mean(germany), sd=sd(germany)), add=TRUE, lwd=2)
+qqPlot(germany, main = "QQ Plot for Germany")
+
+hist(spain, freq=FALSE, main = "Histogram for Spain")
+lines(density(spain), col=2, lwd=2)
+curve(dnorm(x, mean=mean(spain), sd=sd(spain)), add=TRUE, lwd=2)
+qqPlot(spain, main = "QQ Plot for Spain")
+
+hist(uk, freq=FALSE, main = "Histogram for United Kingdom")
+lines(density(uk), col=2, lwd=2)
+curve(dnorm(x, mean=mean(uk), sd=sd(uk)), add=TRUE, lwd=2)
+qqPlot(uk, main = "QQ Plot for United Kingdom")
+
+leveneTest(TotalSpend ~ Country, data = retail) # unequal, p=0.02001
+
+# ANOVA with Welch's Adjustment
+oneway.test(TotalSpend ~ Country, data = retail, var.equal = FALSE) 
+
+# Multiple Comparisons with Welch's Adjustment
+pairwise.t.test(x=retail$TotalSpend, g=retail$Country,
+                pool.sd = FALSE, p.adjust.method = "holm")
+```
+
+Since the p-value < alpha = 0.05, we have concluded that there is sufficient evidence that there are significant differences in mean total spend among the different countries (ANOVA with Welch's, p-value < 0.001). To identify which specific countries differ from each other, we conducted pairwise comparisons using t-tests with non-pooled standard deviations and the Holm method for p-value adjustment. The results showed several significant differences. We saw that Ireland has a significantly different mean total spend compared to Belgium, the United Kingdom, Germany, and France. However, interestingly, Spain did not show significant differences with any countries, and this might because of its genuine similar spending patterns or its smaller sample size. Furthermore, the lack of significant differences between most country pairs (i.e., Belgium vs. Germany, France vs. Spain) suggests that many countries have similar mean total spend levels.
+
+From these findings, we can see that while the United Kingdom represents the largest market in terms of number of transactions, its spending patterns are not significantly different from most other countries (except Ireland). This suggests that volume, rather than higher individual transaction values, drives its importance to the business. In addition, this similarity in spending pattern among majority of the countries suggests that the firm can standardized some marketing strategies, potentially leading to operational efficiency. However, if the firm would like to increase their consumers from Ireland, they should pay special attention to the Irish market and tailor marketing strategies or product offerings to their Irish customers.
+
+## Analysis 3: Factors Influencing Total Spend in the UK Market
+
+* Null Hypothesis: There is no significant linear relationship between the number of unique items purchased and the total spend per invoice in the United Kingdom.
+* Alternative Hypothesis: There is a significant linear relationship between the number of unique items purchased and the total spend per invoice in the United Kingdom.
+
+The rationale for the last analysis is to understand the factors that influence total spend specifcally in the UK market that can help the online retailer optimize their business strategies. We first focused on the number of unique items as a predictor, while also considering other potential predictors.
+
+We first conducted a simple linear regression analysis with the number of unique items as the independent variable and total spend as the dependent variable. Before the analysis, we checked the assumptions of independence, linearity between the TotalSpend and UniqueItems, the residuals being normally distributed, and equal variance (the variance of TotalSpend does not change with UniqueItems). Independence was met because the observations of each invoice is unique to each customer. The scatter plot shows a slight positive trend, but the relationship doesn't appear strongly linear. The Residuals vs Fitted plot shows a slight curve, suggesting some deviation from linearity. The QQ plot shows heavy tails, indicating that the residuals are not normally distributed, however due to the large sample size and the Central Limit Theorem, normality is assumed. This violates the assumption of normality. The Residuals vs Leverage plot shows an increasing spread of residuals as fitted values increase, indicating unequal variance. 
+
+These violations of assumptions suggest that a simple linear regression model may not be the most appropriate for this data.
+
+```{r 5, fig.width=8, fig.height=3}
+# Simple Linear Regression
+retail_uk <- subset(retail, Country == "United Kingdom")
+retail_uk$IsWeekend <- factor(retail_uk$IsWeekend)
+retail_uk$Country <- factor(retail_uk$Country, levels = c("United Kingdom"))
+retail_uk$IsWeekendNumeric <- as.numeric(retail_uk$IsWeekend == "Weekend")
+
+# Simple Linear Regression
+m1 <- lm(TotalSpend ~ UniqueItems, data = retail_uk)
+
+plot(TotalSpend ~ UniqueItems, data = retail_uk, 
+     main = "Relationship between Unique Items and Total Spend (UK)",
+     xlab = "Number of Unique Items", ylab = "Total Spend")
+abline(m1, col="red", lwd=2)
+
+par(mfrow=c(2,2))
+plot(m1)
+```
+
+To potentially improve the model, we conducted a stepwise model selection for the UK market using the AIC criterion. The rationale behind this analysis is to understand what drives customer spending in the retailer's largest market, which can inform targeted marketing strategies and inventory management. 
+
+The candidate variables were TotalSpend (response quantitative variable), UniqueItems (predictor quantitative variable), IsWeekend (predictor categorical variable), and TotalQuantity (predictor quantitative variable). The stepwise selection process resulted in the model, TotalSpend = TotalQuantity + UniqueItems. After the stepwise model selection, we conducted a multiple linear regression with TotalSpend = TotalQuantity + UniqueItems. 
+
+Prior to the analysis, we check the assumptions of independence, linearity to each predictor, normality of residuals, homoscedasticity, and independence among predictors (shouldn't be highly correlated). The observations are independent due to each invoice being different to each other. TotalSpend is linearly related to TotalQuantity with a positive correlation of 0.91. TotalSpend is also linearly related to UniqueItems, however they have a very weak correlation of 0.10. Since the sample size of this analysis is very large, the Central Limit Theorem holds and normality of the residuals is assumed. The Residual vs. Leverage plot shows that majority of the points are gathered around x = 0, however there a couple points all the way to the right, but there is no prominent funnel shape like in the analysis's above. Lastly, TotalQuantity and UniqueItems have a positive weak correlation of 0.10, therefore we cannot assume independence among the predictors. 
+
+```{r 6, fig.width=8, fig.height=5}
+# Model selection
+library(olsrr)
+candiates1 <- c("TotalSpend", "UniqueItems", "IsWeekend", "TotalQuantity")
+m4 <- lm(TotalSpend ~ ., data=retail_uk[ , candiates1])
+ols_step_both_aic(m4)
+ols_step_both_aic(m4, details=TRUE)
+
+vars.in.model <- c("TotalSpend", "UniqueItems", "TotalQuantity")
+pairs(retail_uk[,vars.in.model])
+cor(retail_uk[,vars.in.model])
+
+mod1 <- lm(TotalSpend ~ TotalQuantity, data = retail_uk)
+
+par(mfrow=c(2,2))
+plot(mod1)
+```
+
+There is sufficient evidence to show that TotalQuantity and UniqueItems together explain a signifcant amount of varaibility in TotalSpend (p < 0.0001). About 83% of the variability in TotalSpend is explained by the linear model containing TotalQuantity and UniqueItems. 
+
+Adjusting for UniqueItems, there is a significant relationship between TotalQuantity and TotalSpend (p-value < 0.0001). For each additional product being bought, we expect a customer's total spending to increase by 1.59 pounds on average, holding UniqueItems constant (95% CI 1.58, 1.60). After adjusting for TotalQuantity, UniqueItems has a significant effect on TotalSpend in that for each new unique product bought, there is an average of 1.35 pounds on average, holding TotalQuantity constant (95% CI 0.81, 1.90).
+
+These findings suggest that both the total quantity of items and the variety of items are important factors in determining total spend in the UK market. The exclusion of IsWeekend indicates that whether a purchase is made on a weekend or weekday does not significantly impact total spend when accounting for quantity and variety of items.
+
+## Discussion
+
+This study examined transaction data from a UK-based online retailer specializing in unique all-occasion gifts, focusing on six European countries in 2011. Our analyses revealed several key insights into customer behavior, purchasing patterns, and factors influencing total spend for the United Kingdom's market.
+
+### Weekday vs. Weekend Purchasing Patterns:
+
+In our initial analysis, we compared average purchase quantities across weekends and weekdays which yielded surprising results. Contrary to common assumptions, we found no statistically significant difference in the average total quantities of items purchased between weekends and weekdays when considering all countries. This finding challenges the notion that online shopping behavior significantly differs on weekends due to increased leisure time.
+
+However, when we focused specifically on the UK market, which comprises 92.4% of our dataset, we observed a significant difference. UK customers tend to purchase more items on weekends compared to weekdays, with an average increase of approximately 20.7 items per transaction. This country-specific pattern highlights the importance of market-specific analysis and suggests that British consumers may indeed have different shopping habits on weekends, possibly due to cultural or other factors 
+
+### High-Value Transactions Across Countries:
+
+We concluded in our second analysis that in the proportions of high-value transactions across different countries. Notably, Ireland showed the highest proportion of high-value transactions (61.67%), followed by France (44.93%). Surprisingly, the United Kingdom, despite representing the majority of transactions, had the lowest proportion of high-value transactions (29.51%).
+
+These findings suggested that customer spending patterns vary considerably across global markets. The high proportion of high-value transactions in Ireland and France indicates potential opportunities for targeted marketing and product offerings in these countries. Contrarily, the low proportion in the UK, combined with its high transaction volume, suggests that the UK market is driven more by transaction frequency than by high-value purchases.
+
+We then furthered our analysis by looking into the mean total spent across the six countries reinforced these observations. Ireland stood out with significantly different mean total spend compared to other countries, while most other countries showed similar spending levels. This similarity in spending patterns among most countries suggests that standardized marketing strategies could be effective across multiple markets. 
+
+### Factors Influencing Total Spend in the UK Market:
+
+Our final analysis focused on understanding the drivers of total spend in the UK market. We found that both the total quantity of items and the variety of unique items significantly influence total spend. Specifically, each additional product purchased is associated with an average increase of 1.59 pounds in total spend, while each new unique product is associated with an average increase of 1.35 pounds, holding other factors constant.
+
+We found it interesting that a purchase was made on a weekend or weekday did not significantly impact total spend when accounting for quantity and variety of items. This suggested that while UK customers tend to buy more items on weekends, their overall spending is more influenced by the number and variety of products than by the day of the week.
+
+In conclusion, this study reveals purchasing patterns across different six European markets, United Kingdom, Germany, France, Ireland, Belgium, and Spain, for this online gift retailer. These findings highlight the importance of balancing market-specific strategies, and highlight the potential for data-driven decision-making in online retailing. 
+
+\newpage
+
+## References
+
+[1] European e-Justice Portal, "Consumer Rights Directive 2011/83/EU," [Online]. Available: https://e-justice.europa.eu/639/EN/consumer_rights_directive_201183. [Accessed: June 26, 2024].
+
+[2] Office for National Statistics, "E-commerce and ICT Activity," November 30, 2012. [Online]. Available: https://www.ons.gov.uk/businessindustryandtrade/itandinternetindustry/bulletins/ecommerceandictactivity/2012-11-30. [Accessed: June 20, 2024].
+
+[3] UCI Machine Learning Repository, "Online Retail Data Set," University of California, Irvine, CA, 2009. [Online]. Available: https://archive.ics.uci.edu/dataset/352/. [Accessed: June 14, 2024].
+
+[4] U.S. Department of Commerce, "United Kingdom E-commerce," [Online].
+Available: https://www.trade.gov/country-commercial-guides/united-kingdom-ecommerce#:~:text
+=The%20UK%20has%20the%20third,%24285.60%20billion%20dollars%20by%202025. [Accessed: June 26, 2024].
+
+
+
+
+
+\newpage
+
+# Appendix: All code and results for this report
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=TRUE}
+```
